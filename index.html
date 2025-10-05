@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RogueLX</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #A855F7; /* Violet 500 */
+            --background-dark: #111827; /* Gray 900 */
+            --card-bg: #1F2937; /* Gray 800 */
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--background-dark);
+        }
+        /* Custom styles for the video player container for 16:9 aspect ratio */
+        .video-container {
+            position: relative;
+            width: 100%;
+            padding-bottom: 56.25%; /* 16:9 Aspect Ratio */
+            height: 0;
+            overflow: hidden;
+            border-radius: 0.75rem; /* rounded-xl */
+        }
+        .video-container video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body class="text-white min-h-screen">
+
+    <!-- Main Application Container -->
+    <div id="app-container" class="max-w-7xl mx-auto">
+        <!-- Header / Navigation -->
+        <header class="sticky top-0 z-10 bg-gray-900/90 backdrop-blur-sm shadow-xl p-4 md:p-6 flex flex-wrap justify-between items-center gap-4 border-b border-gray-700/50">
+            <!-- Title/Logo -->
+            <h1 class="text-3xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-fuchsia-600 cursor-pointer" onclick="navigate('home')">
+                RogueLX
+            </h1>
+            
+            <!-- Right side controls wrapper (allows elements to wrap on smaller screens) -->
+            <div class="flex flex-wrap items-center gap-4 ml-auto"> 
+                <!-- Search Input (takes up full width on mobile, moves to middle on desktop) -->
+                <div class="relative flex-grow min-w-[150px] max-w-xs order-1 sm:order-none w-full sm:w-auto">
+                    <input type="text" id="search-input" oninput="searchMovies(this.value)" placeholder="Search titles, genres..." 
+                           class="w-full bg-gray-700 text-white rounded-full py-2 pl-4 pr-10 focus:ring-2 focus:ring-violet-500 focus:outline-none transition duration-200 text-sm">
+                    <svg class="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                </div>
+
+                <!-- Main Nav Buttons (Home/My List) -->
+                <nav id="main-nav-buttons" class="flex gap-2 order-2 sm:order-none"></nav>
+
+                <!-- User Actions (Notification/Profile) -->
+                <div id="user-actions-buttons" class="flex gap-2 order-3 sm:order-none"></div>
+            </div>
+        </header>
+
+        <!-- Main Content Area (Dynamically Rendered) -->
+        <main id="content" class="p-4 md:p-8">
+            <!-- Content will be injected here -->
+            <div id="loading-indicator" class="text-center text-gray-400 py-12">
+                Loading application...
+            </div>
+        </main>
+
+        <!-- Custom Notification Modal (for PWA updates/messages) -->
+        <div id="notification-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 hidden items-center justify-center p-4 z-50">
+            <div class="bg-card-bg p-6 rounded-xl shadow-2xl max-w-sm w-full border border-violet-500">
+                <h3 id="notification-title" class="text-xl font-bold mb-3 text-violet-400">Notification</h3>
+                <p id="notification-message" class="text-gray-300 mb-4"></p>
+                <button onclick="hideNotification()" class="w-full py-2 bg-violet-600 rounded-lg hover:bg-violet-700 font-semibold transition">Close</button>
+            </div>
+        </div>
+
+    </div>
+
+    <script type="module">
+        // --- FIREBASE SETUP ---
+        // Using Type="module" allows using modern JavaScript imports for Firebase.
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { 
+            getAuth, 
+            signInAnonymously, 
+            signInWithCustomToken, 
+            onAuthStateChanged,
+            signOut                         
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        // NOTE: createUserWithEmailAndPassword and signInWithEmailAndPassword are now unused
+        // as the forms are set to simulate success and navigate directly.
+        
+        // Global variables provided by the canvas environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app;
+        let auth;
+
+        // --- 1. MOCK MOVIE DATA ---
+        // Using Big Buck Bunny (Creative Commons) as a test video source.
+        const VIDEO_SOURCE = "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/";
+        const MOVIES = [
+            { id: 1, title: "Big Buck Bunny", year: 2008, duration: "9:56", genre: "Animation, Comedy", summary: "A large rabbit lives a peaceful life until three mischievous rodents harass him. When one sunny day three rodents rudely harass him, something snaps and the rabbit ain't no bunny anymore! In the typical cartoon tradition he prepares the nasty rodents a comical revenge.", poster: "https://placehold.co/400x600/6D28D9/fff?text=Big+Buck+Bunny", videoUrl: VIDEO_SOURCE + "BigBuckBunny.mp4" },
+            { id: 2, title: "Sintel", year: 2010, duration: "14:48", genre: "Fantasy, Action", summary: "A young woman named Sintel is searching for her companion, a baby dragon named Scales, across harsh landscapes.", poster: "https://placehold.co/400x600/4F46E5/fff?text=Sintel+Poster", videoUrl: VIDEO_SOURCE + "Sintel.mp4" },
+            { id: 3, title: "Tears of Steel", year: 2012, duration: "12:14", genre: "Sci-Fi, Cyberpunk", summary: "A group of scientists and warriors gather to reclaim the city of Amsterdam from hostile robots.", poster: "https://placehold.co/400x600/D946EF/fff?text=Tears+Of+Steel", videoUrl: VIDEO_SOURCE + "TearsOfSteel.mp4" },
+            { id: 4, title: "Elephant's Dream", year: 2006, duration: "10:54", genre: "Surreal, Short", summary: "Two men, Proog and Emo, reside in a gigantic, surreal machine, a vast world of noise and strange devices.", poster: "https://placehold.co/400x600/06B6D4/fff?text=Elephant's+Dream", videoUrl: VIDEO_SOURCE + "ElephantsDream.mp4" },
+            // Duplicating for a bigger list feel
+            { id: 5, title: "Sci-Fi Mock 1", year: 2023, duration: "1:45:00", genre: "Sci-Fi, Thriller", summary: "Mock movie summary for a suspenseful thriller about a deep space colony.", poster: "https://placehold.co/400x600/0F766E/fff?text=MOCK+SCI-FI+1", videoUrl: VIDEO_SOURCE + "BigBuckBunny.mp4" },
+            { id: 6, title: "Comedy Mock 2", year: 2024, duration: "2:01:00", genre: "Comedy, Romance", summary: "Mock movie summary for a lighthearted comedy.", poster: "https://placehold.co/400x600/D97706/fff?text=MOCK+COMEDY+2", videoUrl: VIDEO_SOURCE + "Sintel.mp4" },
+        ];
+
+        // --- 2. APPLICATION STATE & ROUTING ---
+        // Use a Set for efficient tracking of favorited movie IDs (in-memory mock storage)
+        const FAVORITES = new Set(); 
+        
+        let currentState = {
+            view: 'home',
+            selectedMovieId: null,
+            searchQuery: '', 
+            user: null, // Holds the Firebase user object
+            isAuthReady: false // Tracks if Firebase auth state has been determined
+        };
+        const contentDiv = document.getElementById('content');
+        const navContainer = document.getElementById('main-nav-buttons');
+        const userActionsContainer = document.getElementById('user-actions-buttons'); 
+        const notificationModal = document.getElementById('notification-modal');
+        const notificationTitle = document.getElementById('notification-title');
+        const notificationMessage = document.getElementById('notification-message');
+
+        function showNotification(title, message) {
+            notificationTitle.textContent = title;
+            notificationMessage.textContent = message;
+            notificationModal.classList.remove('hidden', 'opacity-0');
+            notificationModal.classList.add('flex', 'opacity-100');
+        }
+
+        function hideNotification() {
+            notificationModal.classList.add('hidden', 'opacity-0');
+            notificationModal.classList.remove('flex', 'opacity-100');
+        }
+        
+        function showNotifications() {
+            showNotification(
+                "Notifications (Mock)", 
+                "You have 3 new alerts! The new season of 'Cyberpunk Dreams' starts next week. Don't forget to check out the latest deals."
+            );
+        }
+
+        function showLoading(show, message = "Loading...") {
+            const loadingDiv = document.getElementById('global-loading');
+            if (show) {
+                if (!loadingDiv) {
+                    const newDiv = document.createElement('div');
+                    newDiv.id = 'global-loading';
+                    newDiv.className = 'fixed inset-0 z-50 flex items-center justify-center bg-gray-900/80 backdrop-blur-sm';
+                    newDiv.innerHTML = `
+                        <div class="bg-card-bg p-6 rounded-xl shadow-2xl max-w-xs w-full border border-violet-500 text-center">
+                            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-400 mx-auto mb-3"></div>
+                            <p class="text-white">${message}</p>
+                        </div>
+                    `;
+                    document.body.appendChild(newDiv);
+                } else {
+                    loadingDiv.querySelector('p').textContent = message;
+                    loadingDiv.classList.remove('hidden');
+                }
+            } else {
+                loadingDiv?.remove();
+            }
+        }
+        
+        function navigate(view, movieId = null) {
+            currentState.view = view;
+            currentState.selectedMovieId = movieId;
+            
+            // Clear search query if navigating to details or auth pages
+            if (view === 'details' || view === 'profile' || view === 'signin' || view === 'signup') {
+                currentState.searchQuery = '';
+            }
+
+            render();
+        }
+
+        function getParams() {
+            const params = new URLSearchParams(window.location.search);
+            const view = params.get('view') || 'home';
+            const id = params.get('id') ? parseInt(params.get('id')) : null;
+            return { view, id };
+        }
+
+        function toggleFavorite(event, movieId) {
+            if (event) {
+                event.stopPropagation();
+            }
+            if (!currentState.user) {
+                showNotification("Sign In Required", "You must sign in to save items to My List.");
+                navigate('signin');
+                return;
+            }
+
+            const movie = MOVIES.find(m => m.id === movieId);
+            if (!movie) return;
+
+            if (FAVORITES.has(movieId)) {
+                FAVORITES.delete(movieId);
+                showNotification("Removed from My List", movie.title + " was removed from your list.");
+            } else {
+                FAVORITES.add(movieId);
+                showNotification("Added to My List", movie.title + " was added to your list!");
+            }
+            
+            render(); 
+        }
+
+        function searchMovies(query) {
+            currentState.searchQuery = query.trim().toLowerCase();
+            
+            // Ensure we are in a grid view when searching
+            if (currentState.view !== 'home' && currentState.view !== 'favorites') {
+                 currentState.view = 'home';
+                 currentState.selectedMovieId = null;
+            }
+
+            render();
+        }
+
+        function handleDownload(movie) {
+            if (!currentState.user) {
+                showNotification("Sign In Required", "You must sign in to download content.");
+                navigate('signin');
+                return;
+            }
+            try {
+                const link = document.createElement('a');
+                link.href = movie.videoUrl;
+                // Sets the suggested filename for the download
+                link.download = `${movie.title.replace(/\s/g, '_')}_RogueLX.mp4`; 
+                
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                showNotification("Download Initiated", `${movie.title} is now downloading to your device.`);
+            } catch (error) {
+                console.error("Download failed:", error);
+                showNotification("Download Failed", "Could not start the download. Check console for details.");
+            }
+        }
+
+        // --- AUTHENTICATION HANDLERS (SIMULATION ENABLED) ---
+        
+        async function handleSignOut() {
+            try {
+                // Since initial state is anonymous, signing out will just re-login anonymously
+                await signOut(auth);
+                // Clear state relevant to the previous user
+                FAVORITES.clear(); 
+                navigate('home');
+                showNotification("Success", "You have been successfully signed out.");
+            } catch (error) {
+                console.error("Sign out error:", error);
+                showNotification("Error", "Failed to sign out. Please try again.");
+            }
+        }
+
+        /**
+         * SIMULATION: Skips actual Firebase authentication.
+         * Shows a loading spinner and immediately navigates to 'home'.
+         */
+        async function handleSignUp(email, password) {
+            showLoading(true, "Simulating account creation...");
+            // Simulate network delay for a better user experience
+            await new Promise(resolve => setTimeout(resolve, 750)); 
+            showLoading(false);
+
+            // Since the user is already signed in anonymously by default, we just update the UI state.
+            // In a real app, this would update the user object with email/password credentials.
+            showNotification("Welcome!", `Simulated account created successfully! Navigating to Home.`);
+            FAVORITES.clear(); 
+            navigate('home');
+        }
+
+        /**
+         * SIMULATION: Skips actual Firebase authentication.
+         * Shows a loading spinner and immediately navigates to 'home'.
+         */
+        async function handleSignIn(email, password) {
+            showLoading(true, "Simulating sign-in...");
+            // Simulate network delay for a better user experience
+            await new Promise(resolve => setTimeout(resolve, 750)); 
+            showLoading(false);
+            
+            // Since the user is already signed in anonymously by default, we just update the UI state.
+            // In a real app, this would verify credentials and update the user object.
+            showNotification("Welcome Back!", `Simulated sign-in successful! Navigating to Home.`);
+            navigate('home');
+        }
+
+
+        // --- 3. RENDERING FUNCTIONS ---
+
+        function updateNavigation() {
+            const favoritesActive = currentState.view === 'favorites' ? 'bg-violet-700' : 'bg-gray-700 hover:bg-gray-600';
+            const homeActive = currentState.view === 'home' ? 'bg-violet-700' : 'bg-violet-600 hover:bg-violet-700';
+            const isLoggedIn = !!currentState.user;
+
+            // 1. Main Navigation (Home/My List)
+            // Hide My List if not logged in
+            const myListButton = isLoggedIn ? `
+                <button onclick="navigate('favorites')" class="py-2 px-4 rounded-full text-sm font-semibold transition duration-200 ${favoritesActive} shadow-lg hover:shadow-gray-500/50 whitespace-nowrap">
+                    <svg class="w-5 h-5 inline-block mr-1 -mt-0.5" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd"></path></svg>
+                    My List (${FAVORITES.size})
+                </button>
+            ` : '';
+
+            navContainer.innerHTML = `
+                ${myListButton}
+                <button onclick="navigate('home')" class="py-2 px-4 rounded-full text-sm font-semibold transition duration-200 ${homeActive} shadow-lg hover:shadow-violet-500/50 whitespace-nowrap">
+                    <svg class="w-5 h-5 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                    Home
+                </button>
+            `;
+
+            // 2. User Actions (Notification/Profile/Auth)
+            let authButton;
+            if (isLoggedIn) {
+                // If logged in, show Profile and Sign Out button
+                authButton = `
+                    <button onclick="navigate('profile')" class="p-2 rounded-full bg-violet-600 hover:bg-violet-700 transition duration-200 shadow-lg hover:shadow-violet-500/50" title="Profile">
+                        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                    </button>
+                    <button onclick="handleSignOut()" class="py-2 px-4 rounded-full text-sm font-semibold transition duration-200 bg-red-600 hover:bg-red-700 shadow-lg hover:shadow-red-500/50" title="Sign Out">
+                        Sign Out
+                    </button>
+                `;
+            } else {
+                // If logged out, show Sign In button
+                authButton = `
+                    <button onclick="navigate('signin')" class="py-2 px-4 rounded-full text-sm font-semibold transition duration-200 bg-violet-600 hover:bg-violet-700 shadow-lg hover:shadow-violet-500/50" title="Sign In">
+                        Sign In / Up
+                    </button>
+                `;
+            }
+
+            userActionsContainer.innerHTML = `
+                <!-- Notification Button (Always visible) -->
+                <button onclick="showNotifications()" class="p-2 rounded-full bg-gray-700 hover:bg-gray-600 transition duration-200 shadow-lg hover:shadow-gray-500/50 relative" title="Notifications">
+                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 01-6 0v-1m6 0H9"></path></svg>
+                    <!-- Mock Badge -->
+                    <span class="absolute top-0 right-0 block h-3 w-3 rounded-full ring-2 ring-gray-900 bg-red-500"></span>
+                </button>
+                ${authButton}
+            `;
+        }
+
+        function updateSearchInput() {
+            const input = document.getElementById('search-input');
+            if (input && document.activeElement !== input) {
+                // Only update the value if the user isn't currently typing in it
+                input.value = currentState.searchQuery;
+            }
+        }
+        
+        function renderMovieGrid() {
+            const query = currentState.searchQuery;
+            
+            let filteredMovies = MOVIES.filter(movie => 
+                (movie.title.toLowerCase().includes(query) ||
+                 movie.genre.toLowerCase().includes(query) ||
+                 movie.summary.toLowerCase().includes(query))
+            );
+
+            const title = query ? `Search Results for "${query}" (${filteredMovies.length})` : 'Featured Movies';
+
+            contentDiv.innerHTML = `
+                <h2 class="text-4xl font-extrabold mb-8 text-white">${title}</h2>
+                ${filteredMovies.length === 0 ? 
+                    `<div class="text-center py-16 bg-card-bg rounded-xl">
+                        <p class="text-xl text-gray-400 mb-4">No results found for "${query}".</p>
+                        <button onclick="navigate('home')" class="py-3 px-8 rounded-full font-semibold bg-violet-600 hover:bg-violet-700 transition shadow-lg hover:shadow-violet-500/50">
+                            Start Browsing Movies
+                        </button>
+                    </div>` : 
+                    `<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                        ${filteredMovies.map(movie => {
+                            const isFavorite = FAVORITES.has(movie.id);
+                            return `
+                                <div class="movie-card bg-card-bg rounded-xl shadow-lg hover:shadow-violet-500/50 transition duration-300 transform hover:scale-[1.03] relative">
+                                    <!-- Favorite Toggle Button -->
+                                    <button onclick="toggleFavorite(event, ${movie.id})" 
+                                            class="absolute top-2 right-2 p-2 rounded-full z-10 
+                                                ${isFavorite ? 'text-red-500 bg-black/60 hover:bg-black/80' : 'text-white/80 bg-black/50 hover:bg-violet-600/70'} 
+                                                transition duration-200 focus:outline-none"
+                                            title="${isFavorite ? 'Remove from My List' : 'Add to My List'}">
+                                        <!-- Heart Icon (filled or outline) -->
+                                        ${isFavorite ? 
+                                            `<svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd"></path></svg>` :
+                                            `<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>`
+                                        }
+                                    </button>
+                                    <!-- Clickable area for navigation (excluding the button) -->
+                                    <div onclick="navigate('details', ${movie.id})" class="cursor-pointer">
+                                        <img src="${movie.poster}" alt="${movie.title} Poster" class="w-full h-auto rounded-t-xl object-cover aspect-[2/3] transform transition duration-300">
+                                        <div class="p-4">
+                                            <h3 class="text-lg font-semibold truncate">${movie.title}</h3>
+                                            <p class="text-sm text-gray-400">${movie.year} | ${movie.genre.split(',')[0]}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>`
+                }
+            `;
+        }
+        
+        function renderFavorites() {
+            const query = currentState.searchQuery;
+            
+            let favoriteMovies = MOVIES.filter(movie => FAVORITES.has(movie.id));
+            
+            // Apply search filter to favorites
+            let filteredFavorites = favoriteMovies.filter(movie => 
+                (movie.title.toLowerCase().includes(query) ||
+                 movie.genre.toLowerCase().includes(query) ||
+                 movie.summary.toLowerCase().includes(query))
+            );
+
+            const title = query 
+                ? `My List Search Results (${filteredFavorites.length} items)` 
+                : `My List (${filteredFavorites.length} items)`;
+
+            contentDiv.innerHTML = `
+                <h2 class="text-4xl font-extrabold mb-8 text-white">${title}</h2>
+                ${filteredFavorites.length === 0 ? 
+                    `<div class="text-center py-16 bg-card-bg rounded-xl">
+                        <p class="text-xl text-gray-400 mb-4">
+                            ${query ? `No items in your list match "${query}".` : "Your favorites list is currently empty."}
+                        </p>
+                        <button onclick="navigate('home')" class="py-3 px-8 rounded-full font-semibold bg-violet-600 hover:bg-violet-700 transition shadow-lg hover:shadow-violet-500/50">
+                            Start Browsing Movies
+                        </button>
+                    </div>` : 
+                    `<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                        ${filteredFavorites.map(movie => {
+                            // In favorites view, the icon is always a filled heart (remove action)
+                            return `
+                                <div class="movie-card bg-card-bg rounded-xl shadow-lg hover:shadow-violet-500/50 transition duration-300 transform hover:scale-[1.03] relative">
+                                    <!-- Favorite Toggle Button -->
+                                    <button onclick="toggleFavorite(event, ${movie.id})" 
+                                            class="absolute top-2 right-2 p-2 rounded-full z-10 text-red-500 bg-black/60 hover:bg-black/80 transition duration-200 focus:outline-none"
+                                            title="Remove from My List">
+                                        <!-- Filled Heart Icon -->
+                                        <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd"></path></svg>
+                                    </button>
+                                    <div onclick="navigate('details', ${movie.id})" class="cursor-pointer">
+                                        <img src="${movie.poster}" alt="${movie.title} Poster" class="w-full h-auto rounded-t-xl object-cover aspect-[2/3] transform transition duration-300">
+                                        <div class="p-4">
+                                            <h3 class="text-lg font-semibold truncate">${movie.title}</h3>
+                                            <p class="text-sm text-gray-400">${movie.year} | ${movie.genre.split(',')[0]}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>`
+                }
+            `;
+        }
+
+        function renderMovieDetails(movieId) {
+            const movie = MOVIES.find(m => m.id === movieId);
+            if (!movie) {
+                contentDiv.innerHTML = '<div class="text-red-400 text-center py-12">Movie not found.</div>';
+                return;
+            }
+
+            const isFavorite = FAVORITES.has(movie.id);
+
+            contentDiv.innerHTML = `
+                <button onclick="navigate('home')" class="mb-6 inline-flex items-center text-violet-400 hover:text-violet-300 transition">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    Back to Home
+                </button>
+
+                <h2 class="text-4xl md:text-5xl font-extrabold mb-4 text-white">${movie.title}</h2>
+                <p class="text-lg text-gray-400 mb-6">${movie.year} | ${movie.duration} | ${movie.genre}</p>
+
+                <!-- Video Player -->
+                <div class="video-container mb-6 shadow-2xl shadow-violet-900/50">
+                    <video controls autoplay class="w-full h-full rounded-xl" poster="${movie.poster}">
+                        <!-- Using the public domain test video source -->
+                        <source src="${movie.videoUrl}" type="video/mp4">
+                        Sorry, your browser doesn't support embedded videos.
+                    </video>
+                </div>
+
+                <!-- Action Buttons (Favorite and Download) -->
+                <div class="flex flex-col md:flex-row gap-4 mb-10">
+                    <!-- Prominent Favorite Button -->
+                    <button onclick="toggleFavorite(null, ${movie.id})" 
+                            class="py-3 px-8 rounded-lg font-bold w-full md:w-auto transition duration-200 flex-grow
+                                ${isFavorite ? 'bg-red-600 hover:bg-red-700' : 'bg-violet-600 hover:bg-violet-700'} 
+                                shadow-xl hover:shadow-lg focus:outline-none flex items-center justify-center">
+                        <svg class="w-5 h-5 inline-block mr-2" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                            <path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd"></path>
+                        </svg>
+                        ${isFavorite ? 'Remove from My List' : 'Add to My List'}
+                    </button>
+                    
+                    <!-- Download Button -->
+                    <button onclick="handleDownload(MOVIES.find(m => m.id === ${movie.id}))" 
+                            class="py-3 px-8 rounded-lg font-bold w-full md:w-auto transition duration-200 bg-gray-600 hover:bg-gray-500 shadow-xl hover:shadow-lg focus:outline-none flex-grow flex items-center justify-center">
+                        <svg class="w-5 h-5 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        Download (${movie.duration})
+                    </button>
+                </div>
+
+                <!-- Movie Details -->
+                <div class="bg-card-bg p-6 md:p-8 rounded-xl shadow-xl border border-gray-700/50">
+                    <h3 class="text-2xl font-bold mb-3 text-violet-400">Synopsis</h3>
+                    <p class="text-gray-300 leading-relaxed">${movie.summary}</p>
+                    <div class="mt-6 pt-4 border-t border-gray-700/50">
+                        <p class="text-sm text-gray-500">Note: This is a mock streaming application. The video shown is the public domain movie "${movie.title}" for testing purposes.</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderSignInPage() {
+            contentDiv.innerHTML = `
+                <div class="max-w-md mx-auto p-6 bg-card-bg rounded-xl shadow-2xl border border-violet-700/50">
+                    <h2 class="text-3xl font-bold mb-6 text-center text-violet-400">Sign In</h2>
+                    <form id="signin-form" class="space-y-6">
+                        <div>
+                            <label for="signin-email" class="block text-sm font-medium text-gray-300 mb-1">Email Address</label>
+                            <input type="email" id="signin-email" required
+                                class="w-full px-4 py-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-2 focus:ring-violet-500 focus:outline-none transition duration-200"
+                                placeholder="you@example.com">
+                        </div>
+                        <div>
+                            <label for="signin-password" class="block text-sm font-medium text-gray-300 mb-1">Password</label>
+                            <input type="password" id="signin-password" required minlength="6"
+                                class="w-full px-4 py-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-2 focus:ring-violet-500 focus:outline-none transition duration-200"
+                                placeholder="******">
+                        </div>
+                        <button type="submit" class="w-full py-3 bg-violet-600 rounded-lg hover:bg-violet-700 font-semibold text-lg transition duration-200 shadow-lg hover:shadow-violet-500/50">
+                            Sign In
+                        </button>
+                    </form>
+                    <p class="mt-6 text-center text-gray-400">
+                        Don't have an account? 
+                        <a href="#" onclick="event.preventDefault(); navigate('signup')" class="text-fuchsia-400 hover:text-fuchsia-300 font-medium transition">Sign Up</a>
+                    </p>
+                </div>
+            `;
+            
+            // Attach form submission listener
+            document.getElementById('signin-form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const email = document.getElementById('signin-email').value;
+                const password = document.getElementById('signin-password').value;
+                handleSignIn(email, password); // Calls the simulated sign-in handler
+            });
+        }
+
+        function renderSignUpPage() {
+            contentDiv.innerHTML = `
+                <div class="max-w-md mx-auto p-6 bg-card-bg rounded-xl shadow-2xl border border-fuchsia-700/50">
+                    <h2 class="text-3xl font-bold mb-6 text-center text-fuchsia-400">Sign Up</h2>
+                    <form id="signup-form" class="space-y-6">
+                        <div>
+                            <label for="signup-email" class="block text-sm font-medium text-gray-300 mb-1">Email Address</label>
+                            <input type="email" id="signup-email" required
+                                class="w-full px-4 py-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-2 focus:ring-fuchsia-500 focus:outline-none transition duration-200"
+                                placeholder="you@example.com">
+                        </div>
+                        <div>
+                            <label for="signup-password" class="block text-sm font-medium text-gray-300 mb-1">Password (min 6 chars)</label>
+                            <input type="password" id="signup-password" required minlength="6"
+                                class="w-full px-4 py-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-2 focus:ring-fuchsia-500 focus:outline-none transition duration-200"
+                                placeholder="******">
+                        </div>
+                        <button type="submit" class="w-full py-3 bg-fuchsia-600 rounded-lg hover:bg-fuchsia-700 font-semibold text-lg transition duration-200 shadow-lg hover:shadow-fuchsia-500/50">
+                            Create Account
+                        </button>
+                    </form>
+                    <p class="mt-6 text-center text-gray-400">
+                        Already have an account? 
+                        <a href="#" onclick="event.preventDefault(); navigate('signin')" class="text-violet-400 hover:text-violet-300 font-medium transition">Sign In</a>
+                    </p>
+                </div>
+            `;
+            
+            // Attach form submission listener
+            document.getElementById('signup-form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const email = document.getElementById('signup-email').value;
+                const password = document.getElementById('signup-password').value;
+                handleSignUp(email, password); // Calls the simulated sign-up handler
+            });
+        }
+
+        function renderProfilePage() {
+            const user = currentState.user;
+            if (!user) {
+                contentDiv.innerHTML = `
+                    <div class="max-w-lg mx-auto p-8 bg-card-bg rounded-xl shadow-2xl text-center border border-red-700/50">
+                        <svg class="w-16 h-16 mx-auto mb-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"></path></svg>
+                        <h2 class="text-3xl font-bold mb-4 text-white">Access Denied</h2>
+                        <p class="text-gray-400 mb-6">You must be signed in to view your profile.</p>
+                        <button onclick="navigate('signin')" class="py-3 px-8 rounded-full font-semibold bg-violet-600 hover:bg-violet-700 transition shadow-lg hover:shadow-violet-500/50">
+                            Sign In Now
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+
+            // Using the current user's email if available, otherwise fallback to UID
+            const emailDisplay = user.email || "N/A (Anonymous)";
+            const userIdDisplay = user.uid || 'Unknown ID';
+            
+            // Simple logic to show a subscription based on whether it's an email/password user
+            const subscriptionTier = user.email ? "Premium HD" : "Guest/Anonymous";
+
+            contentDiv.innerHTML = `
+                <button onclick="navigate('home')" class="mb-6 inline-flex items-center text-violet-400 hover:text-violet-300 transition">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    Back to Home
+                </button>
+                
+                <h2 class="text-4xl md:text-5xl font-extrabold mb-8 text-white flex items-center">
+                    <svg class="w-10 h-10 mr-4 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                    My Profile
+                </h2>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <!-- Account Details Card (Left/Top) -->
+                    <div class="lg:col-span-2 bg-card-bg p-6 rounded-xl shadow-xl border border-gray-700/50">
+                        <h3 class="text-2xl font-bold mb-5 text-violet-400 border-b border-gray-700/50 pb-3">Account Details</h3>
+                        
+                        <div class="space-y-4">
+                            <div class="flex justify-between border-b border-gray-800 pb-2">
+                                <span class="text-gray-400">User ID (UID)</span>
+                                <span class="font-semibold text-white truncate text-sm">${userIdDisplay}</span>
+                            </div>
+                            <div class="flex justify-between border-b border-gray-800 pb-2">
+                                <span class="text-gray-400">Email</span>
+                                <span class="font-semibold text-white">${emailDisplay}</span>
+                            </div>
+                            <div class="flex justify-between border-b border-gray-800 pb-2">
+                                <span class="text-gray-400">Subscription Tier</span>
+                                <span class="font-bold ${subscriptionTier.includes('Premium') ? 'text-green-400' : 'text-yellow-400'}">${subscriptionTier}</span>
+                            </div>
+                            <div class="flex justify-between pb-2">
+                                <span class="text-gray-400">Account Type</span>
+                                <span class="font-semibold text-white">${user.email ? 'Email/Password' : 'Custom Token/Anonymous'}</span>
+                            </div>
+                        </div>
+
+                        ${user.email ? 
+                            `<button onclick="showNotification('Manage Subscription', 'This feature would redirect you to a billing management page.')" 
+                                class="mt-8 py-3 px-6 rounded-lg font-bold w-full transition duration-200 bg-violet-600 hover:bg-violet-700 shadow-lg">
+                                Manage Subscription & Billing
+                            </button>` :
+                            `<button onclick="navigate('signup')" 
+                                class="mt-8 py-3 px-6 rounded-lg font-bold w-full transition duration-200 bg-fuchsia-600 hover:bg-fuchsia-700 shadow-lg">
+                                Upgrade to Premium
+                            </button>`
+                        }
+                        
+                    </div>
+
+                    <!-- Settings & Actions Card (Right/Bottom) -->
+                    <div class="bg-card-bg p-6 rounded-xl shadow-xl border border-gray-700/50">
+                        <h3 class="text-2xl font-bold mb-5 text-fuchsia-400 border-b border-gray-700/50 pb-3">Settings & Actions</h3>
+                        
+                        <div class="space-y-3">
+                            <button onclick="showNotification('Privacy Settings', 'Privacy settings updated (mock action).')" class="w-full text-left py-2 px-3 rounded-lg hover:bg-gray-700 transition flex items-center justify-between">
+                                Privacy Settings
+                                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.001 12.001 0 0012 21a12.001 12.001 0 008.618-17.016z"></path></svg>
+                            </button>
+                            <button onclick="showNotification('Parental Controls', 'Redirecting to Parental Control setup (mock action).')" class="w-full text-left py-2 px-3 rounded-lg hover:bg-gray-700 transition flex items-center justify-between">
+                                Parental Controls
+                                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                            </button>
+                            <button onclick="showNotification('Language Preferences', 'Language set to English (mock action).')" class="w-full text-left py-2 px-3 rounded-lg hover:bg-gray-700 transition flex items-center justify-between">
+                                Language Preferences
+                                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 0112 15.714c3.047-3.418 5.432-6.57 6.084-8.814L21 6"></path></svg>
+                            </button>
+                            <div class="pt-4 border-t border-gray-700/50 mt-4">
+                                <button onclick="handleSignOut()" class="py-3 px-6 rounded-lg font-bold w-full transition duration-200 bg-red-600 hover:bg-red-700 shadow-lg flex items-center justify-center">
+                                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3v-3m14-1V6a3 3 0 00-3-3H6a3 3 0 00-3 3v3"></path></svg>
+                                    Log Out
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+
+        function render() {
+            document.getElementById('loading-indicator')?.remove();
+            
+            // Wait for auth state to be determined before rendering the main content
+            if (!currentState.isAuthReady) {
+                // If not ready, show a simple loading message
+                contentDiv.innerHTML = '<div class="text-center py-12 text-gray-400">Initializing Authentication...</div>';
+                return;
+            }
+
+            updateNavigation(); 
+            updateSearchInput();
+
+            if (currentState.view === 'home') {
+                renderMovieGrid();
+            } else if (currentState.view === 'details' && currentState.selectedMovieId !== null) {
+                renderMovieDetails(currentState.selectedMovieId);
+            } else if (currentState.view === 'favorites') { 
+                // Redirect if not logged in
+                if (!currentState.user) {
+                    navigate('signin'); 
+                    return;
+                }
+                renderFavorites();
+            } else if (currentState.view === 'profile') { 
+                renderProfilePage();
+            } else if (currentState.view === 'signin') { // New sign in view
+                renderSignInPage();
+            } else if (currentState.view === 'signup') { // New sign up view
+                renderSignUpPage();
+            } else {
+                navigate('home');
+            }
+        }
+        
+        // --- INITIALIZATION ---
+
+        function initFirebase() {
+            try {
+                // Only initialize if firebaseConfig is not empty
+                if (!Object.keys(firebaseConfig).length) {
+                    console.warn("Firebase config is missing. Running in limited, anonymous-only mode.");
+                }
+
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                
+                // 1. Listen for auth state changes
+                onAuthStateChanged(auth, async (user) => {
+                    currentState.user = user;
+                    // If this is the *first* time we get a state change, mark ready
+                    if (!currentState.isAuthReady) {
+                        currentState.isAuthReady = true;
+                        render();
+                    } else {
+                        // For subsequent changes, just re-render to update navigation/content
+                        render();
+                    }
+                });
+
+                // 2. Perform initial authentication (must be done after listener is set)
+                (async () => {
+                    if (initialAuthToken) {
+                        // Sign in with the provided custom token
+                        await signInWithCustomToken(auth, initialAuthToken).catch(e => {
+                            console.error("Custom Token Sign-In Failed. Falling back to Anonymous.", e);
+                            return signInAnonymously(auth);
+                        });
+                    } else {
+                        // Fallback to anonymous sign-in if no token is available
+                        await signInAnonymously(auth).catch(e => {
+                             console.error("Anonymous Sign-In Failed.", e);
+                        });
+                    }
+                })();
+
+
+            } catch (e) {
+                console.error("Firebase Initialization Failed:", e);
+                // Fallback state if Firebase fails entirely
+                currentState.isAuthReady = true;
+                currentState.user = null;
+                render();
+            }
+        }
+
+
+        // Start the application process
+        const initialParams = getParams();
+        currentState.view = initialParams.view;
+        currentState.selectedMovieId = initialParams.id;
+        
+        // --- EXPOSE FUNCTIONS GLOBALLY ---
+        // Functions used in inline HTML event handlers must be attached to the global window object
+        // when using type="module" script blocks.
+        window.navigate = navigate;
+        window.toggleFavorite = toggleFavorite;
+        window.searchMovies = searchMovies;
+        window.handleDownload = handleDownload;
+        window.handleSignOut = handleSignOut;
+        window.showNotifications = showNotifications;
+        window.hideNotification = hideNotification;
+        window.handleSignUp = handleSignUp; 
+        window.handleSignIn = handleSignIn; 
+
+
+        // Initialize Firebase and start listening
+        initFirebase(); 
+        
+
+        // --- 4. PROGRESSIVE WEB APP (PWA) SETUP ---
+
+        // A) Manifest Data (converted to base64 for single-file embedding)
+        const manifestData = {
+            name: "RogueLX",
+            short_name: "RogueLX",
+            description: "A movie streaming platform.",
+            start_url: "./index.html?view=home",
+            display: "standalone",
+            background_color: "#111827",
+            theme_color: "#A855F7",
+            icons: [
+                { src: "https://placehold.co/192x192/A855F7/fff?text=RL", sizes: "192x192", type: "image/png" },
+                { src: "https://placehold.co/512x512/A855F7/fff?text=RL", sizes: "512x512", type: "image/png" }
+            ]
+        };
+
+        // Create a blob URL for the manifest and inject the link tag
+        function registerManifest() {
+            try {
+                const manifestBlob = new Blob([JSON.stringify(manifestData)], { type: 'application/json' });
+                const manifestURL = URL.createObjectURL(manifestBlob);
+                const link = document.createElement('link');
+                link.rel = 'manifest';
+                link.href = manifestURL;
+                document.head.appendChild(link);
+                console.log('PWA Manifest registered successfully.');
+            } catch (e) {
+                console.error('Failed to register PWA Manifest:', e);
+            }
+        }
+        
+        registerManifest();
+
+        // Service worker and history manipulation logic were removed to avoid SecurityErrors 
+        // in the sandboxed environment.
+    </script>
+</body>
+</html>
