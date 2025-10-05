@@ -93,8 +93,6 @@
             onAuthStateChanged,
             signOut                         
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        // NOTE: createUserWithEmailAndPassword and signInWithEmailAndPassword are now unused
-        // as the forms are set to simulate success and navigate directly.
         
         // Global variables provided by the canvas environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -122,7 +120,7 @@
         const FAVORITES = new Set(); 
         
         let currentState = {
-            view: 'home',
+            view: 'signin', // Initial view, overridden by getParams if deep link exists
             selectedMovieId: null,
             searchQuery: '', 
             user: null, // Holds the Firebase user object
@@ -191,7 +189,8 @@
 
         function getParams() {
             const params = new URLSearchParams(window.location.search);
-            const view = params.get('view') || 'home';
+            // Defaulting to 'home' here allows deep links like index.html?id=1 to load properly
+            const view = params.get('view') || 'home'; 
             const id = params.get('id') ? parseInt(params.get('id')) : null;
             return { view, id };
         }
@@ -261,6 +260,10 @@
             try {
                 // Since initial state is anonymous, signing out will just re-login anonymously
                 await signOut(auth);
+                
+                // FIX: Manually clear the mock user state to reflect sign out
+                currentState.user = null; 
+
                 // Clear state relevant to the previous user
                 FAVORITES.clear(); 
                 navigate('home');
@@ -273,47 +276,59 @@
 
         /**
          * SIMULATION: Skips actual Firebase authentication.
-         * Shows a loading spinner and immediately navigates to 'home'.
+         * Navigates to 'home' as requested and sets a mock user object.
          */
         async function handleSignUp(email, password) {
             showLoading(true, "Simulating account creation...");
-            // Simulate network delay for a better user experience
             await new Promise(resolve => setTimeout(resolve, 750)); 
+            
+            // FIX: Set a mock user object to enable "My List" and "Profile"
+            currentState.user = { 
+                uid: 'mock-auth-user-' + Math.random().toString(36).substring(2, 9), 
+                email: email || 'newuser@roguelx.com'
+            };
+
             showLoading(false);
 
-            // Since the user is already signed in anonymously by default, we just update the UI state.
-            // In a real app, this would update the user object with email/password credentials.
-            showNotification("Welcome!", `Simulated account created successfully! Navigating to Home.`);
+            showNotification("Welcome!", `Simulated account created successfully! Navigating to Home Page.`);
             FAVORITES.clear(); 
-            navigate('home');
+            // VITAL CHANGE: Navigate to home after sign up
+            navigate('home'); 
         }
 
         /**
          * SIMULATION: Skips actual Firebase authentication.
-         * Shows a loading spinner and immediately navigates to 'home'.
+         * Navigates to 'home' as requested and sets a mock user object.
          */
         async function handleSignIn(email, password) {
             showLoading(true, "Simulating sign-in...");
-            // Simulate network delay for a better user experience
             await new Promise(resolve => setTimeout(resolve, 750)); 
+            
+            // FIX: Set a mock user object to enable "My List" and "Profile"
+            currentState.user = { 
+                uid: 'mock-auth-user-' + Math.random().toString(36).substring(2, 9), 
+                email: email || 'user@roguelx.com' 
+            };
+            
             showLoading(false);
             
-            // Since the user is already signed in anonymously by default, we just update the UI state.
-            // In a real app, this would verify credentials and update the user object.
-            showNotification("Welcome Back!", `Simulated sign-in successful! Navigating to Home.`);
-            navigate('home');
+            showNotification("Welcome Back!", `Simulated sign-in successful! Navigating to Home Page.`);
+            // VITAL CHANGE: Navigate to home after sign in
+            navigate('home'); 
         }
 
 
         // --- 3. RENDERING FUNCTIONS ---
 
         function updateNavigation() {
+            // Check if user is logged in AND not currently on the sign-in/sign-up page
+            const isLoggedIn = !!currentState.user && currentState.view !== 'signin' && currentState.view !== 'signup';
+
             const favoritesActive = currentState.view === 'favorites' ? 'bg-violet-700' : 'bg-gray-700 hover:bg-gray-600';
             const homeActive = currentState.view === 'home' ? 'bg-violet-700' : 'bg-violet-600 hover:bg-violet-700';
-            const isLoggedIn = !!currentState.user;
 
             // 1. Main Navigation (Home/My List)
-            // Hide My List if not logged in
+            // Show My List only if logged in
             const myListButton = isLoggedIn ? `
                 <button onclick="navigate('favorites')" class="py-2 px-4 rounded-full text-sm font-semibold transition duration-200 ${favoritesActive} shadow-lg hover:shadow-gray-500/50 whitespace-nowrap">
                     <svg class="w-5 h-5 inline-block mr-1 -mt-0.5" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd"></path></svg>
@@ -321,16 +336,33 @@
                 </button>
             ` : '';
 
+            // Only show home button if the user is 'signed in' OR if they are currently viewing a page that is not sign in/up
+            const showHomeButton = isLoggedIn || (currentState.view !== 'signin' && currentState.view !== 'signup');
+
             navContainer.innerHTML = `
                 ${myListButton}
-                <button onclick="navigate('home')" class="py-2 px-4 rounded-full text-sm font-semibold transition duration-200 ${homeActive} shadow-lg hover:shadow-violet-500/50 whitespace-nowrap">
-                    <svg class="w-5 h-5 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
-                    Home
-                </button>
+                ${showHomeButton ? `
+                    <button onclick="navigate('home')" class="py-2 px-4 rounded-full text-sm font-semibold transition duration-200 ${homeActive} shadow-lg hover:shadow-violet-500/50 whitespace-nowrap">
+                        <svg class="w-5 h-5 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                        Home
+                    </button>
+                ` : ''}
             `;
 
             // 2. User Actions (Notification/Profile/Auth)
             let authButton;
+            
+            // Show only if the current view is NOT signin or signup
+            if (currentState.view === 'signin' || currentState.view === 'signup') {
+                userActionsContainer.innerHTML = `
+                    <button onclick="navigate('home')" class="py-2 px-4 rounded-full text-sm font-semibold transition duration-200 bg-gray-700 hover:bg-gray-600 shadow-lg hover:shadow-gray-500/50" title="Back to Home">
+                        Browse Anonymously
+                    </button>
+                `;
+                return;
+            }
+
+
             if (isLoggedIn) {
                 // If logged in, show Profile and Sign Out button
                 authButton = `
@@ -342,7 +374,7 @@
                     </button>
                 `;
             } else {
-                // If logged out, show Sign In button
+                // If logged out (and not on signin/signup page), show Sign In button
                 authButton = `
                     <button onclick="navigate('signin')" class="py-2 px-4 rounded-full text-sm font-semibold transition duration-200 bg-violet-600 hover:bg-violet-700 shadow-lg hover:shadow-violet-500/50" title="Sign In">
                         Sign In / Up
@@ -541,13 +573,13 @@
                     <h2 class="text-3xl font-bold mb-6 text-center text-violet-400">Sign In</h2>
                     <form id="signin-form" class="space-y-6">
                         <div>
-                            <label for="signin-email" class="block text-sm font-medium text-gray-300 mb-1">Email Address</label>
+                            <label for="signin-email" class="block text-sm font-medium text-gray-300 mb-1">Email Address (Mock)</label>
                             <input type="email" id="signin-email" required
                                 class="w-full px-4 py-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-2 focus:ring-violet-500 focus:outline-none transition duration-200"
                                 placeholder="you@example.com">
                         </div>
                         <div>
-                            <label for="signin-password" class="block text-sm font-medium text-gray-300 mb-1">Password</label>
+                            <label for="signin-password" class="block text-sm font-medium text-gray-300 mb-1">Password (Mock)</label>
                             <input type="password" id="signin-password" required minlength="6"
                                 class="w-full px-4 py-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-2 focus:ring-violet-500 focus:outline-none transition duration-200"
                                 placeholder="******">
@@ -578,13 +610,13 @@
                     <h2 class="text-3xl font-bold mb-6 text-center text-fuchsia-400">Sign Up</h2>
                     <form id="signup-form" class="space-y-6">
                         <div>
-                            <label for="signup-email" class="block text-sm font-medium text-gray-300 mb-1">Email Address</label>
+                            <label for="signup-email" class="block text-sm font-medium text-gray-300 mb-1">Email Address (Mock)</label>
                             <input type="email" id="signup-email" required
                                 class="w-full px-4 py-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-2 focus:ring-fuchsia-500 focus:outline-none transition duration-200"
                                 placeholder="you@example.com">
                         </div>
                         <div>
-                            <label for="signup-password" class="block text-sm font-medium text-gray-300 mb-1">Password (min 6 chars)</label>
+                            <label for="signup-password" class="block text-sm font-medium text-gray-300 mb-1">Password (min 6 chars, Mock)</label>
                             <input type="password" id="signup-password" required minlength="6"
                                 class="w-full px-4 py-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-2 focus:ring-fuchsia-500 focus:outline-none transition duration-200"
                                 placeholder="******">
@@ -728,7 +760,7 @@
             } else if (currentState.view === 'details' && currentState.selectedMovieId !== null) {
                 renderMovieDetails(currentState.selectedMovieId);
             } else if (currentState.view === 'favorites') { 
-                // Redirect if not logged in
+                // Redirect if not logged in (or if just accessing the page before auth)
                 if (!currentState.user) {
                     navigate('signin'); 
                     return;
@@ -759,15 +791,16 @@
                 
                 // 1. Listen for auth state changes
                 onAuthStateChanged(auth, async (user) => {
-                    currentState.user = user;
-                    // If this is the *first* time we get a state change, mark ready
+                    // When the app starts, this listener populates currentState.user with the initial Firebase user (usually anonymous).
+                    // For the mock sign-in, we manually set currentState.user in handleSignIn/handleSignUp.
+                    
                     if (!currentState.isAuthReady) {
+                        // This check only runs on initial load to confirm the starting auth state.
+                        currentState.user = user;
                         currentState.isAuthReady = true;
                         render();
-                    } else {
-                        // For subsequent changes, just re-render to update navigation/content
-                        render();
                     }
+                    // Subsequent changes (like a real sign-out) are handled by the mock functions which then trigger a render().
                 });
 
                 // 2. Perform initial authentication (must be done after listener is set)
@@ -802,6 +835,13 @@
         currentState.view = initialParams.view;
         currentState.selectedMovieId = initialParams.id;
         
+        // VITAL CHANGE: Force the initial view to 'signin' unless a deep link is explicitly requested.
+        // If the URL is just 'index.html' (which getParams treats as view 'home' and id null), 
+        // we override it to 'signin'.
+        if (currentState.view === 'home' && currentState.selectedMovieId === null) {
+            currentState.view = 'signin';
+        }
+        
         // --- EXPOSE FUNCTIONS GLOBALLY ---
         // Functions used in inline HTML event handlers must be attached to the global window object
         // when using type="module" script blocks.
@@ -826,8 +866,8 @@
         const manifestData = {
             name: "RogueLX",
             short_name: "RogueLX",
-            description: "A movie streaming platform.",
-            start_url: "./index.html?view=home",
+            description: "A PWA mock movie streaming platform.",
+            start_url: "./index.html?view=signin", // Updated start URL for PWA
             display: "standalone",
             background_color: "#111827",
             theme_color: "#A855F7",
@@ -853,9 +893,6 @@
         }
         
         registerManifest();
-
-        // Service worker and history manipulation logic were removed to avoid SecurityErrors 
-        // in the sandboxed environment.
     </script>
 </body>
 </html>
